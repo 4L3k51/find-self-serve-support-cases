@@ -711,23 +711,30 @@ def process_single_conversation(conversation_id, gemini_api_key, github_pat=None
         )
         troubleshooting_content['self_serve_evaluation'] = self_serve_evaluation
         
-        # Check if self-serve evaluation contains YES and run refinement
-        if 'YES' in self_serve_evaluation.upper():
-            print(f"  Refining guide to match good examples...")
-            time.sleep(5)
-            # Create a basic body from the insights for refinement
-            basic_body = troubleshooting_content.get('insights', '')
-            refined_guide = refine_guide(
-                troubleshooting_content.get('title', ''),
-                basic_body,
-                gemini_api_key
-            )
-            troubleshooting_content['refined_title'] = refined_guide.get('refined_title', troubleshooting_content.get('title', ''))
-            troubleshooting_content['refined_body'] = refined_guide.get('refined_body', basic_body)
-        else:
-            print(f"  Skipping refinement - guide is not self-serve")
-            troubleshooting_content['refined_title'] = troubleshooting_content.get('title', '')
-            troubleshooting_content['refined_body'] = troubleshooting_content.get('insights', '')
+        # Check if self-serve - if NO, skip remaining processing
+        is_self_serve = 'YES' in self_serve_evaluation.upper()
+        result['is_self_serve'] = is_self_serve
+        
+        if not is_self_serve:
+            print(f"  ✗ Not self-serve - skipping remaining processing")
+            result['troubleshooting_content'] = troubleshooting_content
+            result['status'] = 'success'
+            return result
+        
+        # Continue with self-serve guide processing
+        print(f"  ✓ Self-serve guide - continuing processing...")
+        
+        # Refine guide to match good examples
+        print(f"  Refining guide to match good examples...")
+        time.sleep(5)
+        basic_body = troubleshooting_content.get('insights', '')
+        refined_guide = refine_guide(
+            troubleshooting_content.get('title', ''),
+            basic_body,
+            gemini_api_key
+        )
+        troubleshooting_content['refined_title'] = refined_guide.get('refined_title', troubleshooting_content.get('title', ''))
+        troubleshooting_content['refined_body'] = refined_guide.get('refined_body', basic_body)
         
         # Final PII check on refined content
         print(f"  Performing final PII check...")
@@ -744,9 +751,6 @@ def process_single_conversation(conversation_id, gemini_api_key, github_pat=None
         }
         mdx_content = format_troubleshooting_mdx(mdx_sections)
         troubleshooting_content['mdx_content'] = mdx_content
-        
-        # Set is_self_serve flag
-        result['is_self_serve'] = 'YES' in self_serve_evaluation.upper()
         
         # Create GitHub Gist if github_pat is provided
         if github_pat and mdx_content:
@@ -818,12 +822,13 @@ def process_conversation_batch(conversation_ids, gemini_api_key, github_pat=None
         
         # Print status
         if result['status'] == 'success':
-            status_msg = f"✓ Troubleshooting content generated successfully"
             if result.get('is_self_serve'):
-                status_msg += " (SELF-SERVE)"
-            if result.get('gist_url'):
-                status_msg += f" | Gist: {result['gist_url']}"
-            print(status_msg)
+                status_msg = f"✓ Self-serve guide created"
+                if result.get('gist_url'):
+                    status_msg += f" | Gist: {result['gist_url']}"
+                print(status_msg)
+            else:
+                print(f"○ Not self-serve - skipped")
         else:
             print(f"✗ Failed: {result['error']}")
         
