@@ -87,6 +87,57 @@ PROMPTS = {
         "Provide brief reasoning for your answer.\n\n"
         "SELF_SERVE_EVALUATION: <YES or NO, followed by brief reasoning>\n"
     ),
+    
+    #this prompt compares the generated troubleshooting guide with existing, good troubleshooting guides and generates a new version that matches the tone and concision
+    "refine_guide": (
+        "Compare the generated troubleshooting guide with these good examples and refine it to match their style, tone and concision.\n\n"
+        
+        "Do NOT introduce any new technical claims, facts, hypotheses, roles, tables, error causes, commands, SQL, or steps that are not already present in the GUIDE TO REFINE. Also, only use relative links.\n\n"
+        "- Anonymize all customer-specific details: replace actual table and schema names with generic placeholders (e.g., 'example_table', 'example_schema'), "
+        "and replace specific numeric values from the incident (row counts, sizes, XIDs, percentages) with generalized ranges or examples "
+        "(e.g., 'millions of rows', 'hundreds of GBs', 'approaching the threshold'). Keep the guide issue-agnostic while preserving technical accuracy\n"
+
+        "GOOD EXAMPLES:\n"
+        "---\n"
+        "Example 1:\n"
+        "Title: An \"invalid response was received from the upstream server\" error when querying auth\n"
+        "Body: If you are observing an \"invalid response was received from the upstream server\" error when making requests to Supabase Auth, it could mean that the respective service is down. One way to confirm this is to visit the [logs explorer](/dashboard/project/_/logs/explorer) and look at the auth logs to see if there are any errors with the following lines:\n"
+        "\n"
+        "- `running db migrations: error executing migrations/20221208132122_backfill_email_last_sign_in_at.up.sql`\n"
+        "\n"
+        "We're currently investigating an issue where the tables responsible for keeping track of migrations ran by Auth (`auth.schema_migrations`) are not being restored properly, which leads to the service(s) retrying those migrations. In such cases, migrations which are not idempotent will run into issues.\n"
+        "\n"
+        "We've documented some of the migrations that run into this issue and their corresponding fix here:\n"
+        "\n"
+        "### Auth: `operator does not exist: uuid = text`\n"
+        "\n"
+        "Temporary fix: Run `insert into auth.schema_migrations values ('20221208132122');` via the [SQL editor](/dashboard/project/_/sql/new) to fix the issue.\n"
+        "\n"
+        "If the migration error you're seeing looks different, reach out to [supabase.help](https://supabase.help/) for assistance.\n"
+        "---\n\n"
+        "---\n"
+        "Example 2:\n"
+        "Title: Auth error: {{401: invalid claim: missing sub}}\n"
+        "Body: The missing sub claim error is returned when `supabase.auth.getUser()` is called with an invalid JWT in the session or when the user attempts to register/sign in but hasn't completed the sign in when the `getUser` call is made.\n"
+        "\n"
+        "A common pitfall is inadvertently using a Supabase API key (such as the anon or service_role keys) instead of the Supabase Auth access token.\n"
+        "\n"
+        "**Why Does This Happen?**\n"
+        "- The Supabase API keys are designed for different purposes and, while they are recognized by the Supabase Auth system, they do not carry the sub claim. The sub claim is essential as it encodes the user ID, which is a mandatory field for authentication processes. This mistake leads to the \"missing sub claim\" error because the system expects a token that contains user identification information.\n"
+        "\n"
+        "**How to Avoid This Issue:**\n"
+        "- Ensure that the token being passed to `supabase.auth.getUser()` is, indeed, an Auth access token and not one of the API keys.\n"
+        "- Are you creating the client on a per-request basis or are you creating a global client to be shared? If you're creating the client on a per-request basis, then you need to pass the session with the user's JWT from the client to the server somehow. This can be done by sending the user's JWT in a header like an `Authorization: Bearer <user_jwt>`. You can then get this header and call `supabase.auth.getUser(user_jwt)` with the user's JWT.\n"
+        "- Examine how the Supabase client is being initialized, especially in server-side scenarios.\n"
+        "---\n\n"
+
+        "GUIDE TO REFINE:\n"
+        "Title: {title}\n"
+        "Body: {body}\n\n"
+        
+        "REFINED_TITLE: <Ensure the title is specific like in the examples>\n"
+        "REFINED_BODY: <Match the example styles in tone, structure and concision.>"
+    ),
 
 
 }
@@ -477,6 +528,26 @@ def evaluate_self_serve(title: str, insights: str, conversation_text: str, gemin
     
     return response.text.strip()
 
+def refine_guide(title: str, body: str, gemini_api_key):
+    """Refine the troubleshooting guide to match good examples' style and tone."""
+    if not title or not body:
+        return {"refined_title": title, "refined_body": body}
+    
+    prompt = PROMPTS["refine_guide"].format(title=title, body=body)
+    
+    response = call_gemini_with_retries(gemini_api_key, prompt)
+    if not response:
+        return {"refined_title": title, "refined_body": body}
+    
+    # Parse the refined title and body from the response
+    refined_title_match = re.search(r'REFINED_TITLE:\s*(.*?)(?=REFINED_BODY:|$)', response.text, re.DOTALL | re.IGNORECASE)
+    refined_body_match = re.search(r'REFINED_BODY:\s*(.*?)$', response.text, re.DOTALL | re.IGNORECASE)
+    
+    refined_title = refined_title_match.group(1).strip() if refined_title_match else title
+    refined_body = refined_body_match.group(1).strip() if refined_body_match else body
+    
+    return {"refined_title": refined_title, "refined_body": refined_body}
+
 def format_troubleshooting_mdx(sections, error_codes=None):
     """Create improved MDX troubleshooting guide from sections (Supabase docs format)."""
     title = (sections.get('title') or 'Untitled Troubleshooting Guide').strip('<>"').strip()
@@ -588,6 +659,33 @@ def process_single_conversation(conversation_id, gemini_api_key):
             gemini_api_key
         )
         troubleshooting_content['self_serve_evaluation'] = self_serve_evaluation
+        
+        # Check if self-serve evaluation contains YES and run refinement
+        if 'YES' in self_serve_evaluation.upper():
+            print(f"  Refining guide to match good examples...")
+            time.sleep(5)
+            # Create a basic body from the insights for refinement
+            basic_body = troubleshooting_content.get('insights', '')
+            refined_guide = refine_guide(
+                troubleshooting_content.get('title', ''),
+                basic_body,
+                gemini_api_key
+            )
+            troubleshooting_content['refined_title'] = refined_guide.get('refined_title', troubleshooting_content.get('title', ''))
+            troubleshooting_content['refined_body'] = refined_guide.get('refined_body', basic_body)
+        else:
+            print(f"  Skipping refinement - guide is not self-serve")
+            troubleshooting_content['refined_title'] = troubleshooting_content.get('title', '')
+            troubleshooting_content['refined_body'] = troubleshooting_content.get('insights', '')
+        
+        # Generate MDX content using refined title and body
+        mdx_sections = {
+            'title': troubleshooting_content.get('refined_title', ''),
+            'body': troubleshooting_content.get('refined_body', '')
+        }
+        mdx_content = format_troubleshooting_mdx(mdx_sections)
+        troubleshooting_content['mdx_content'] = mdx_content
+        
         result['troubleshooting_content'] = troubleshooting_content
         
         print("=" * 80)
@@ -596,6 +694,8 @@ def process_single_conversation(conversation_id, gemini_api_key):
         print(f"INSIGHTS: {troubleshooting_content.get('insights', 'N/A')}")
         print(f"TROUBLESHOOTING_GUIDE_TITLE: {troubleshooting_content.get('title', 'N/A')}")
         print(f"SELF_SERVE_EVALUATION: {troubleshooting_content.get('self_serve_evaluation', 'N/A')}")
+        print(f"REFINED_TITLE: {troubleshooting_content.get('refined_title', 'N/A')}")
+        print(f"REFINED_BODY: {troubleshooting_content.get('refined_body', 'N/A')}")
         print("=" * 80)
         
         result['status'] = 'success'
@@ -670,12 +770,18 @@ def create_results_dataframe(results):
             row['insights'] = content.get('insights', '')
             row['self_serve_evaluation'] = content.get('self_serve_evaluation', '')
             row['title'] = content.get('title', '')
+            row['refined_title'] = content.get('refined_title', '')
+            row['refined_body'] = content.get('refined_body', '')
+            row['mdx_content'] = content.get('mdx_content', '')
         else:
             row['problem_expressed_as_question'] = ''
             row['initial_expressed_problem'] = ''
             row['insights'] = ''
             row['self_serve_evaluation'] = ''
             row['title'] = ''
+            row['refined_title'] = ''
+            row['refined_body'] = ''
+            row['mdx_content'] = ''
         
         data.append(row)
     
@@ -690,6 +796,9 @@ def create_results_dataframe(results):
         'insights',
         'self_serve_evaluation',
         'title',
+        'refined_title',
+        'refined_body',
+        'mdx_content',
         'ticket_id',
         'last_support_agent',
         'error'
@@ -714,23 +823,3 @@ result = process_single_conversation(
     SINGLE_CONVERSATION_ID, 
     gemini_vertex_api_key
 )
-
-# Display the result
-print("\n" + "="*80)
-print("PROCESSING RESULT")
-print("="*80)
-print(f"Status: {result['status']}")
-print(f"Conversation ID: {result['conversation_id']}")
-print(f"Ticket ID: {result.get('ticket_id', 'N/A')}")
-print(f"Last Support Agent: {result.get('last_support_agent', 'N/A')}")
-
-if result['status'] == 'success':
-    print("\n✓ Troubleshooting content generated successfully")
-    content = result['troubleshooting_content']
-    print(f"\nTitle: {content.get('title', 'N/A')}")
-    print(f"Problem Question: {content.get('problem_question', 'N/A')}")
-    print(f"Initial Problem: {content.get('initial_problem', 'N/A')}")
-    print(f"Insights: {content.get('insights', 'N/A')}")
-    print(f"Self-Serve Evaluation: {content.get('self_serve_evaluation', 'N/A')}")
-else:
-    print(f"\n✗ Failed: {result.get('error', 'Unknown error')}")
