@@ -660,7 +660,7 @@ def _format_topics_array_improved(topics: list[str]) -> str:
 # MAIN PROCESSING FUNCTIONS
 # ============================================================================
 
-def process_single_conversation(conversation_id, gemini_api_key):
+def process_single_conversation(conversation_id, gemini_api_key, github_pat=None, resolved_at_utc=None):
     """Process one conversation through the simplified pipeline"""
     result = {
         'conversation_id': conversation_id,
@@ -668,7 +668,10 @@ def process_single_conversation(conversation_id, gemini_api_key):
         'error': None,
         'troubleshooting_content': None,
         'ticket_id': None,
-        'last_support_agent': None
+        'last_support_agent': None,
+        'is_self_serve': False,
+        'gist_url': None,
+        'resolved_at_utc': resolved_at_utc
     }
     
     try:
@@ -742,6 +745,20 @@ def process_single_conversation(conversation_id, gemini_api_key):
         mdx_content = format_troubleshooting_mdx(mdx_sections)
         troubleshooting_content['mdx_content'] = mdx_content
         
+        # Set is_self_serve flag
+        result['is_self_serve'] = 'YES' in self_serve_evaluation.upper()
+        
+        # Create GitHub Gist if github_pat is provided
+        if github_pat and mdx_content:
+            print(f"  Creating preview gist...")
+            time.sleep(2)
+            gist_url = create_preview_gist(
+                sanitized_title,
+                mdx_content,
+                github_pat
+            )
+            result['gist_url'] = gist_url
+        
         result['troubleshooting_content'] = troubleshooting_content
         
         print("=" * 80)
@@ -764,8 +781,12 @@ def process_single_conversation(conversation_id, gemini_api_key):
     
     return result
 
-def process_conversation_batch(conversation_ids, max_conversations=None, delay_seconds=20):
-    """Main orchestrator function"""
+def process_conversation_batch(conversation_ids, gemini_api_key, github_pat=None, max_conversations=None, delay_seconds=20):
+    """Main orchestrator function
+    
+    Args:
+        conversation_ids: List of conversation IDs (strings) OR list of dicts with 'conversation_id' and 'resolved_at_utc'
+    """
     
     # Limit conversations if specified
     conversations_to_process = conversation_ids[:max_conversations] if max_conversations else conversation_ids
@@ -775,19 +796,34 @@ def process_conversation_batch(conversation_ids, max_conversations=None, delay_s
     
     results = []
     
-    for i, conversation_id in enumerate(conversations_to_process, 1):
+    for i, conv in enumerate(conversations_to_process, 1):
+        # Handle both string IDs and dict format
+        if isinstance(conv, dict):
+            conversation_id = conv.get('conversation_id')
+            resolved_at_utc = conv.get('resolved_at_utc')
+        else:
+            conversation_id = conv
+            resolved_at_utc = None
+        
         print(f"\n[{i}/{len(conversations_to_process)}] Processing {conversation_id}...")
         
         result = process_single_conversation(
             conversation_id, 
-            gemini_vertex_api_key
+            gemini_api_key,
+            github_pat,
+            resolved_at_utc
         )
         
         results.append(result)
         
         # Print status
         if result['status'] == 'success':
-            print(f"✓ Troubleshooting content generated successfully")
+            status_msg = f"✓ Troubleshooting content generated successfully"
+            if result.get('is_self_serve'):
+                status_msg += " (SELF-SERVE)"
+            if result.get('gist_url'):
+                status_msg += f" | Gist: {result['gist_url']}"
+            print(status_msg)
         else:
             print(f"✗ Failed: {result['error']}")
         
@@ -801,9 +837,14 @@ def process_conversation_batch(conversation_ids, max_conversations=None, delay_s
     print("BATCH PROCESSING SUMMARY")
     print("="*50)
     
+    successful = [r for r in results if r['status'] == 'success']
+    self_serve = [r for r in successful if r.get('is_self_serve')]
+    
     print(f"Total processed: {len(results)}")
-    print(f"Successful: {sum(r['status'] == 'success' for r in results)}")
+    print(f"Successful: {len(successful)}")
     print(f"Failed: {sum(r['status'] == 'failed' for r in results)}")
+    print(f"Self-serve guides: {len(self_serve)}")
+    print(f"Self-serve percentage: {len(self_serve) / len(successful) * 100:.1f}%" if successful else "N/A")
     
     return results
 
@@ -815,6 +856,9 @@ def create_results_dataframe(results):
         row = {
             'conversation_id': result.get('conversation_id', ''),
             'status': result.get('status', ''),
+            'is_self_serve': result.get('is_self_serve', False),
+            'gist_url': result.get('gist_url', ''),
+            'resolved_at_utc': result.get('resolved_at_utc', ''),
             'ticket_id': result.get('ticket_id', ''),
             'last_support_agent': result.get('last_support_agent', ''),
             'error': result.get('error', ''),
@@ -852,7 +896,10 @@ def create_results_dataframe(results):
     # Reorder columns for better readability
     column_order = [
         'conversation_id',
+        'resolved_at_utc',
         'status',
+        'is_self_serve',
+        'gist_url',
         'problem_expressed_as_question',
         'initial_expressed_problem',
         'insights',
@@ -875,9 +922,11 @@ def create_results_dataframe(results):
 # ============================================================================
 
 # API Keys - These should be set in your Hex project variables
-# gemini_vertex_api_key is available from Hex project variables
+# gemini_vertex_api_key, github_pat, SINGLE_CONVERSATION_ID are available from Hex project variables
 
-# Single conversation ID for testing
+# ============================================================================
+# SINGLE CONVERSATION MODE
+# ============================================================================
 
 print(f"Processing single conversation: {SINGLE_CONVERSATION_ID}")
 print("=" * 80)
@@ -885,23 +934,75 @@ print("=" * 80)
 # Process the single conversation
 result = process_single_conversation(
     SINGLE_CONVERSATION_ID, 
-    gemini_vertex_api_key
+    gemini_vertex_api_key,
+    github_pat
 )
 
-# Create GitHub Gist with MDX content for preview
-if result['status'] == 'success' and result.get('troubleshooting_content', {}).get('mdx_content'):
+# Display gist URL if created
+if result['status'] == 'success' and result.get('gist_url'):
     print("\n" + "=" * 80)
-    print("Creating preview gist...")
-    
-    content = result['troubleshooting_content']
-    gist_url = create_preview_gist(
-        content.get('refined_title', 'Troubleshooting Guide'),
-        content.get('mdx_content', ''),
-        github_pat
-    )
-    
-    if gist_url:
-        print(f"✓ Preview gist created: {gist_url}")
-    else:
-        print("✗ Failed to create preview gist")
+    print(f"✓ Preview gist created: {result['gist_url']}")
     print("=" * 80)
+
+# ============================================================================
+# BATCH PROCESSING MODE (Uncomment to use)
+# ============================================================================
+# 
+# # Option 1: Simple list of conversation IDs
+# conversation_ids = [
+#     'cnv_1jfb4aji',
+#     'cnv_2xyz5bcd',
+#     'cnv_3abc6def',
+# ]
+# 
+# # Option 2: From BigQuery with resolved_at_utc (recommended)
+# # Query BigQuery for yesterday's resolved conversations:
+# query = """
+# WITH resolved AS (
+#   SELECT
+#     t.conversation_id,
+#     t.ticket_closed_at AS resolved_at_utc
+#   FROM `supabase-etl-prod-eu.dbt.mart_support_tickets` t
+#   LEFT JOIN `supabase-etl-prod-eu.dbt.refinery_front_conversations_distill` d
+#     USING (conversation_id)
+#   WHERE t.ticket_status = 'resolved'
+#     AND t.source_channel = 'FORM'
+#     AND JSON_VALUE(d.conversation_custom_fields, '$.Effective_Org_Plan') <> 'Free'
+#     AND DATE(t.ticket_closed_at) = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+#   QUALIFY ROW_NUMBER() OVER (PARTITION BY t.conversation_id ORDER BY t.ticket_closed_at DESC) = 1
+# )
+# SELECT conversation_id, resolved_at_utc
+# FROM resolved
+# ORDER BY resolved_at_utc DESC
+# """
+# 
+# connection = htk.get_data_connection("supabase-etl-prod-eu")
+# df_conversations = connection.query(query)
+# 
+# # Convert to list of dicts for processing
+# conversation_ids = df_conversations.to_dict('records')
+# # Format: [{'conversation_id': 'cnv_xxx', 'resolved_at_utc': Timestamp(...)}, ...]
+# 
+# # Process all conversations
+# results = process_conversation_batch(
+#     conversation_ids,
+#     gemini_vertex_api_key,
+#     github_pat,
+#     max_conversations=None,  # Process all, or set a number to limit
+#     delay_seconds=20         # Delay between conversations
+# )
+# 
+# # Create DataFrame with all results
+# df = create_results_dataframe(results)
+# 
+# # Display summary statistics
+# print("\n" + "="*80)
+# print("DATAFRAME SUMMARY")
+# print("="*80)
+# print(f"Total rows: {len(df)}")
+# print(f"Self-serve guides: {df['is_self_serve'].sum()}")
+# print(f"Self-serve percentage: {df['is_self_serve'].sum() / len(df) * 100:.1f}%")
+# print(f"\nColumns: {', '.join(df.columns)}")
+# 
+# # Display the dataframe (or save it)
+# # df
