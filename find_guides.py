@@ -138,6 +138,18 @@ PROMPTS = {
         "REFINED_TITLE: <Ensure the title is specific like in the examples>\n"
         "REFINED_BODY: <Match the example styles in tone, structure and concision.>"
     ),
+    
+    #this prompt makes sure that the expanded content doesn't contain PII information
+    "final_pii_check": (
+        "Remove any organization-identifying information from this guide and make it generic like:\n "
+        "- Organizations → 'your organization'\n"
+        "- Domains/emails → 'example.com', 'user@example.com'\n"
+        "- Project/database names → 'your_project', 'example_table'\n"
+        "- Employee names → 'team member', 'developer'\n"
+        "- Incident-specific dates/versions → 'recently', 'in version X'\n\n"
+        "If no organization-identifying information found, return the guide unchanged. Otherwise, return only the sanitized version.\n\n"
+        "GUIDE:\n{guide_text}"
+    ),
 
 
 }
@@ -548,6 +560,19 @@ def refine_guide(title: str, body: str, gemini_api_key):
     
     return {"refined_title": refined_title, "refined_body": refined_body}
 
+def final_pii_check(guide_text: str, gemini_api_key):
+    """Final PII check to remove any organization-identifying information."""
+    if not guide_text:
+        return guide_text
+    
+    prompt = PROMPTS["final_pii_check"].format(guide_text=guide_text)
+    
+    response = call_gemini_with_retries(gemini_api_key, prompt)
+    if not response:
+        return guide_text
+    
+    return response.text.strip()
+
 def create_preview_gist(title, body, github_pat):
     """Create a secret GitHub Gist with MDX content for preview."""
     gist_data = {
@@ -701,10 +726,18 @@ def process_single_conversation(conversation_id, gemini_api_key):
             troubleshooting_content['refined_title'] = troubleshooting_content.get('title', '')
             troubleshooting_content['refined_body'] = troubleshooting_content.get('insights', '')
         
-        # Generate MDX content using refined title and body
+        # Final PII check on refined content
+        print(f"  Performing final PII check...")
+        time.sleep(5)
+        sanitized_title = final_pii_check(troubleshooting_content.get('refined_title', ''), gemini_api_key)
+        sanitized_body = final_pii_check(troubleshooting_content.get('refined_body', ''), gemini_api_key)
+        troubleshooting_content['sanitized_title'] = sanitized_title
+        troubleshooting_content['sanitized_body'] = sanitized_body
+        
+        # Generate MDX content using sanitized title and body
         mdx_sections = {
-            'title': troubleshooting_content.get('refined_title', ''),
-            'body': troubleshooting_content.get('refined_body', '')
+            'title': sanitized_title,
+            'body': sanitized_body
         }
         mdx_content = format_troubleshooting_mdx(mdx_sections)
         troubleshooting_content['mdx_content'] = mdx_content
@@ -719,6 +752,8 @@ def process_single_conversation(conversation_id, gemini_api_key):
         print(f"SELF_SERVE_EVALUATION: {troubleshooting_content.get('self_serve_evaluation', 'N/A')}")
         print(f"REFINED_TITLE: {troubleshooting_content.get('refined_title', 'N/A')}")
         print(f"REFINED_BODY: {troubleshooting_content.get('refined_body', 'N/A')}")
+        print(f"SANITIZED_TITLE: {troubleshooting_content.get('sanitized_title', 'N/A')}")
+        print(f"SANITIZED_BODY: {troubleshooting_content.get('sanitized_body', 'N/A')}")
         print("=" * 80)
         
         result['status'] = 'success'
@@ -795,6 +830,8 @@ def create_results_dataframe(results):
             row['title'] = content.get('title', '')
             row['refined_title'] = content.get('refined_title', '')
             row['refined_body'] = content.get('refined_body', '')
+            row['sanitized_title'] = content.get('sanitized_title', '')
+            row['sanitized_body'] = content.get('sanitized_body', '')
             row['mdx_content'] = content.get('mdx_content', '')
         else:
             row['problem_expressed_as_question'] = ''
@@ -804,6 +841,8 @@ def create_results_dataframe(results):
             row['title'] = ''
             row['refined_title'] = ''
             row['refined_body'] = ''
+            row['sanitized_title'] = ''
+            row['sanitized_body'] = ''
             row['mdx_content'] = ''
         
         data.append(row)
@@ -821,6 +860,8 @@ def create_results_dataframe(results):
         'title',
         'refined_title',
         'refined_body',
+        'sanitized_title',
+        'sanitized_body',
         'mdx_content',
         'ticket_id',
         'last_support_agent',
