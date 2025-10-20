@@ -548,6 +548,29 @@ def refine_guide(title: str, body: str, gemini_api_key):
     
     return {"refined_title": refined_title, "refined_body": refined_body}
 
+def create_preview_gist(title, body, github_pat):
+    """Create a secret GitHub Gist with MDX content for preview."""
+    gist_data = {
+        "description": f"Preview: {title}",
+        "public": False,  # Secret gist
+        "files": {
+            "preview.md": {
+                "content": f"# {title}\n\n{body}"
+            }
+        }
+    }
+    
+    response = requests.post(
+        "https://api.github.com/gists",
+        headers={
+            "Authorization": f"token {github_pat}",
+            "Accept": "application/vnd.github.v3+json"
+        },
+        json=gist_data
+    )
+    
+    return response.json()['html_url'] if response.status_code == 201 else None
+
 def format_troubleshooting_mdx(sections, error_codes=None):
     """Create improved MDX troubleshooting guide from sections (Supabase docs format)."""
     title = (sections.get('title') or 'Untitled Troubleshooting Guide').strip('<>"').strip()
@@ -823,3 +846,21 @@ result = process_single_conversation(
     SINGLE_CONVERSATION_ID, 
     gemini_vertex_api_key
 )
+
+# Create GitHub Gist with MDX content for preview
+if result['status'] == 'success' and result.get('troubleshooting_content', {}).get('mdx_content'):
+    print("\n" + "=" * 80)
+    print("Creating preview gist...")
+    
+    content = result['troubleshooting_content']
+    gist_url = create_preview_gist(
+        content.get('refined_title', 'Troubleshooting Guide'),
+        content.get('mdx_content', ''),
+        github_pat
+    )
+    
+    if gist_url:
+        print(f"✓ Preview gist created: {gist_url}")
+    else:
+        print("✗ Failed to create preview gist")
+    print("=" * 80)
