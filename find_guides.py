@@ -948,39 +948,11 @@ if result['status'] == 'success' and result.get('gist_url'):
 # BATCH PROCESSING MODE (Uncomment to use)
 # ============================================================================
 # 
-# # Option 1: Simple list of conversation IDs
-# conversation_ids = [
-#     'cnv_1jfb4aji',
-#     'cnv_2xyz5bcd',
-#     'cnv_3abc6def',
-# ]
-# 
-# # Option 2: From BigQuery with resolved_at_utc (recommended)
-# # Query BigQuery for yesterday's resolved conversations:
-# query = """
-# WITH resolved AS (
-#   SELECT
-#     t.conversation_id,
-#     t.ticket_closed_at AS resolved_at_utc
-#   FROM `supabase-etl-prod-eu.dbt.mart_support_tickets` t
-#   LEFT JOIN `supabase-etl-prod-eu.dbt.refinery_front_conversations_distill` d
-#     USING (conversation_id)
-#   WHERE t.ticket_status = 'resolved'
-#     AND t.source_channel = 'FORM'
-#     AND JSON_VALUE(d.conversation_custom_fields, '$.Effective_Org_Plan') <> 'Free'
-#     AND DATE(t.ticket_closed_at) = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-#   QUALIFY ROW_NUMBER() OVER (PARTITION BY t.conversation_id ORDER BY t.ticket_closed_at DESC) = 1
-# )
-# SELECT conversation_id, resolved_at_utc
-# FROM resolved
-# ORDER BY resolved_at_utc DESC
-# """
-# 
-# connection = htk.get_data_connection("supabase-etl-prod-eu")
-# df_conversations = connection.query(query)
+# # Data querying is done in cell above - yesterday_resolved_conversation_ids should be available
+# # Expected format: DataFrame with columns 'conversation_id' and 'resolved_at_utc'
 # 
 # # Convert to list of dicts for processing
-# conversation_ids = df_conversations.to_dict('records')
+# conversation_ids = yesterday_resolved_conversation_ids.to_dict('records')
 # # Format: [{'conversation_id': 'cnv_xxx', 'resolved_at_utc': Timestamp(...)}, ...]
 # 
 # # Process all conversations
