@@ -925,56 +925,67 @@ def create_results_dataframe(results):
 # gemini_vertex_api_key, github_pat, SINGLE_CONVERSATION_ID are available from Hex project variables
 
 # ============================================================================
-# SINGLE CONVERSATION MODE
+# MODE SELECTION
 # ============================================================================
+# Set to True for batch processing, False for single conversation testing
+BATCH_MODE = False
 
-print(f"Processing single conversation: {SINGLE_CONVERSATION_ID}")
-print("=" * 80)
-
-# Process the single conversation
-result = process_single_conversation(
-    SINGLE_CONVERSATION_ID, 
-    gemini_vertex_api_key,
-    github_pat
-)
-
-# Display gist URL if created
-if result['status'] == 'success' and result.get('gist_url'):
-    print("\n" + "=" * 80)
-    print(f"✓ Preview gist created: {result['gist_url']}")
+if BATCH_MODE:
+    # ============================================================================
+    # BATCH PROCESSING MODE
+    # ============================================================================
+    
+    # Data querying is done in cell above - yesterday_resolved_conversation_ids should be available
+    # Expected format: DataFrame with columns 'conversation_id' and 'resolved_at_utc'
+    
+    print("Starting batch processing mode...")
     print("=" * 80)
+    
+    # Convert to list of dicts for processing
+    conversation_ids = yesterday_resolved_conversation_ids.to_dict('records')
+    # Format: [{'conversation_id': 'cnv_xxx', 'resolved_at_utc': Timestamp(...)}, ...]
+    
+    # Process all conversations
+    results = process_conversation_batch(
+        conversation_ids,
+        gemini_vertex_api_key,
+        github_pat,
+        max_conversations=None,  # Process all, or set a number to limit
+        delay_seconds=20         # Delay between conversations
+    )
+    
+    # Create DataFrame with all results
+    df = create_results_dataframe(results)
+    
+    # Display summary statistics
+    print("\n" + "="*80)
+    print("DATAFRAME SUMMARY")
+    print("="*80)
+    print(f"Total rows: {len(df)}")
+    print(f"Self-serve guides: {df['is_self_serve'].sum()}")
+    print(f"Self-serve percentage: {df['is_self_serve'].sum() / len(df) * 100:.1f}%")
+    print(f"\nColumns: {', '.join(df.columns)}")
+    
+    # Display the dataframe (or save it)
+    # df
 
-# ============================================================================
-# BATCH PROCESSING MODE (Uncomment to use)
-# ============================================================================
-# 
-# # Data querying is done in cell above - yesterday_resolved_conversation_ids should be available
-# # Expected format: DataFrame with columns 'conversation_id' and 'resolved_at_utc'
-# 
-# # Convert to list of dicts for processing
-# conversation_ids = yesterday_resolved_conversation_ids.to_dict('records')
-# # Format: [{'conversation_id': 'cnv_xxx', 'resolved_at_utc': Timestamp(...)}, ...]
-# 
-# # Process all conversations
-# results = process_conversation_batch(
-#     conversation_ids,
-#     gemini_vertex_api_key,
-#     github_pat,
-#     max_conversations=None,  # Process all, or set a number to limit
-#     delay_seconds=20         # Delay between conversations
-# )
-# 
-# # Create DataFrame with all results
-# df = create_results_dataframe(results)
-# 
-# # Display summary statistics
-# print("\n" + "="*80)
-# print("DATAFRAME SUMMARY")
-# print("="*80)
-# print(f"Total rows: {len(df)}")
-# print(f"Self-serve guides: {df['is_self_serve'].sum()}")
-# print(f"Self-serve percentage: {df['is_self_serve'].sum() / len(df) * 100:.1f}%")
-# print(f"\nColumns: {', '.join(df.columns)}")
-# 
-# # Display the dataframe (or save it)
-# # df
+else:
+    # ============================================================================
+    # SINGLE CONVERSATION MODE (for testing)
+    # ============================================================================
+    
+    print(f"Processing single conversation: {SINGLE_CONVERSATION_ID}")
+    print("=" * 80)
+    
+    # Process the single conversation
+    result = process_single_conversation(
+        SINGLE_CONVERSATION_ID, 
+        gemini_vertex_api_key,
+        github_pat
+    )
+    
+    # Display gist URL if created
+    if result['status'] == 'success' and result.get('gist_url'):
+        print("\n" + "=" * 80)
+        print(f"✓ Preview gist created: {result['gist_url']}")
+        print("=" * 80)
