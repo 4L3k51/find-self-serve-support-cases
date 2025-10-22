@@ -606,8 +606,8 @@ def write_to_google_sheets(df, google_credentials_json, spreadsheet_id, sheet_na
         # Try to get existing sheet or create new one
         try:
             worksheet = spreadsheet.worksheet(sheet_name)
-            # Clear existing content
-            worksheet.clear()
+            # Append mode: Don't clear existing content
+            # worksheet.clear()  # Commented out for append mode
         except gspread.exceptions.WorksheetNotFound:
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=len(df)+1, cols=len(df.columns))
         
@@ -622,8 +622,14 @@ def write_to_google_sheets(df, google_credentials_json, spreadsheet_id, sheet_na
         
         data = [df_copy.columns.values.tolist()] + df_copy.values.tolist()
         
-        # Update sheet with data
-        worksheet.update(data, value_input_option='RAW')
+        # Append data to sheet (skip header if sheet already has data)
+        existing_data = worksheet.get_all_values()
+        if existing_data:
+            # Sheet has data, append without header
+            worksheet.append_rows(df_copy.values.tolist(), value_input_option='RAW')
+        else:
+            # Empty sheet, write with header
+            worksheet.update(data, value_input_option='RAW')
         
         # Return spreadsheet URL
         return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
@@ -959,7 +965,7 @@ def create_results_dataframe(results):
 # MODE SELECTION
 # ============================================================================
 # Set to True for batch processing, False for single conversation testing
-BATCH_MODE = False
+BATCH_MODE = True
 
 if BATCH_MODE:
     # ============================================================================
