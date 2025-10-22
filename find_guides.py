@@ -13,6 +13,8 @@ import base64
 import textwrap
 import json
 from typing import Set, Dict, List
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 # ============================================================================
 # GENERAL CONFIGURATION
@@ -571,6 +573,54 @@ def create_preview_gist(title, body, github_pat):
     
     return response.json()['html_url'] if response.status_code == 201 else None
 
+def write_to_google_sheets(df, google_credentials_json, spreadsheet_id, sheet_name="Results"):
+    """Write dataframe to Google Sheets.
+    
+    Args:
+        df: pandas DataFrame to write
+        google_credentials_json: JSON string or dict with Google service account credentials
+        spreadsheet_id: Google Sheets spreadsheet ID
+        sheet_name: Name of the sheet/tab to write to
+    
+    Returns:
+        str: Spreadsheet URL if successful, None otherwise
+    """
+    try:
+        # Parse credentials if string
+        if isinstance(google_credentials_json, str):
+            credentials_dict = json.loads(google_credentials_json)
+        else:
+            credentials_dict = google_credentials_json
+        
+        # Setup credentials and authorize
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        client = gspread.authorize(credentials)
+        
+        # Open spreadsheet
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        
+        # Try to get existing sheet or create new one
+        try:
+            worksheet = spreadsheet.worksheet(sheet_name)
+            # Clear existing content
+            worksheet.clear()
+        except gspread.exceptions.WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=len(df)+1, cols=len(df.columns))
+        
+        # Convert DataFrame to list of lists (including header)
+        data = [df.columns.values.tolist()] + df.values.tolist()
+        
+        # Update sheet with data
+        worksheet.update(data, value_input_option='RAW')
+        
+        # Return spreadsheet URL
+        return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
+        
+    except Exception as e:
+        print(f"Error writing to Google Sheets: {e}")
+        return None
+
 def format_troubleshooting_mdx(sections, error_codes=None):
     """Create improved MDX troubleshooting guide from sections (Supabase docs format)."""
     title = (sections.get('title') or 'Untitled Troubleshooting Guide').strip('<>"').strip()
@@ -885,8 +935,12 @@ def create_results_dataframe(results):
 # EXECUTION
 # ============================================================================
 
-# API Keys - These should be set in your Hex project variables
-# gemini_vertex_api_key, github_pat, SINGLE_CONVERSATION_ID are available from Hex project variables
+# Environment Variables - These should be set in your Hex project variables:
+# - gemini_vertex_api_key: Gemini API key for AI processing
+# - github_pat: GitHub personal access token for creating gists
+# - google_credentials_json: JSON string with Google service account credentials
+# - google_sheets_id: Google Sheets spreadsheet ID
+# - SINGLE_CONVERSATION_ID: Single conversation ID for testing mode
 
 # ============================================================================
 # MODE SELECTION
@@ -929,6 +983,23 @@ if BATCH_MODE:
     print(f"Self-serve guides: {df['is_self_serve'].sum()}")
     print(f"Self-serve percentage: {df['is_self_serve'].sum() / len(df) * 100:.1f}%")
     print(f"\nColumns: {', '.join(df.columns)}")
+    
+    # Write to Google Sheets
+    print("\n" + "="*80)
+    print("Writing to Google Sheets...")
+    print("="*80)
+    
+    sheets_url = write_to_google_sheets(
+        df,
+        google_credentials_json,
+        google_sheets_id,
+        sheet_name="Self-Serve Guides"
+    )
+    
+    if sheets_url:
+        print(f"✓ Results written to Google Sheets: {sheets_url}")
+    else:
+        print("✗ Failed to write to Google Sheets")
     
     # Display the dataframe (or save it)
     # df
