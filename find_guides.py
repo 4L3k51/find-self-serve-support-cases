@@ -14,7 +14,7 @@ import textwrap
 import json
 from typing import Set, Dict, List
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 
 # ============================================================================
 # GENERAL CONFIGURATION
@@ -592,9 +592,12 @@ def write_to_google_sheets(df, google_credentials_json, spreadsheet_id, sheet_na
         else:
             credentials_dict = google_credentials_json
         
-        # Setup credentials and authorize
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, scope)
+        # Setup credentials and authorize (modern google-auth method)
+        scopes = [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ]
+        credentials = Credentials.from_service_account_info(credentials_dict, scopes=scopes)
         client = gspread.authorize(credentials)
         
         # Open spreadsheet
