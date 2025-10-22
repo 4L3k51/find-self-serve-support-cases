@@ -612,7 +612,15 @@ def write_to_google_sheets(df, google_credentials_json, spreadsheet_id, sheet_na
             worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=len(df)+1, cols=len(df.columns))
         
         # Convert DataFrame to list of lists (including header)
-        data = [df.columns.values.tolist()] + df.values.tolist()
+        # Convert timestamps and other non-serializable types to strings
+        df_copy = df.copy()
+        for col in df_copy.columns:
+            if df_copy[col].dtype == 'object':
+                df_copy[col] = df_copy[col].astype(str)
+            elif 'datetime' in str(df_copy[col].dtype):
+                df_copy[col] = df_copy[col].astype(str)
+        
+        data = [df_copy.columns.values.tolist()] + df_copy.values.tolist()
         
         # Update sheet with data
         worksheet.update(data, value_input_option='RAW')
