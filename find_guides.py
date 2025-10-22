@@ -621,7 +621,9 @@ def write_to_google_sheets(df, google_credentials_json, spreadsheet_id, sheet_na
         return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}"
         
     except Exception as e:
-        print(f"Error writing to Google Sheets: {e}")
+        import traceback
+        print(f"Error writing to Google Sheets: {type(e).__name__}: {str(e)}")
+        print(f"Full traceback:\n{traceback.format_exc()}")
         return None
 
 def format_troubleshooting_mdx(sections, error_codes=None):
